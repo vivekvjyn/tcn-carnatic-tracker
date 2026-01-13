@@ -6,7 +6,7 @@ training:
   post_processor: "JOINT"
   batch_size: 1
   num_workers: 4
-  
+
   # Early stopping
   early_stop_patience: 20
   early_stop_min_delta: 0.0001
@@ -21,5 +21,5 @@ training:
 # Experiment Tracking
 experiment:
   project_name: "TCN_FS"
-  wandb_api_key: "your_wandb_api_key"
+  wandb_api_key: "7b0a1f54db5ba736162613850f9de227e4d8a74e"
   ckpt_name: "tcn_carnatic_fs"

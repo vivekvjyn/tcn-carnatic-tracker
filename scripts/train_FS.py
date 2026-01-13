@@ -1,10 +1,11 @@
 import os
 import sys
-import shutil
 from datetime import datetime
 import time
 import argparse
 import yaml
+import shutil
+from lightning.pytorch.loggers import CSVLogger, WandbLogger
 
 ROOT = os.path.abspath(os.path.join(os.getcwd(), '..'))
 SRC = os.path.join(ROOT, 'src')
@@ -14,16 +15,14 @@ import lightning as L
 import torch
 from torch.utils.data import DataLoader
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
-from lightning.pytorch.loggers import CSVLogger, WandbLogger
 
-import wandb
 import mirdata
 
 from pre.data_loader import BeatData
 from model.tcn import MultiTracker
 from model.lightning_module import PLTCN
 from utils.split_utils import carn_split_keys
-
+import wandb
 import numpy as np
 import random
 
@@ -47,10 +46,10 @@ with open('../config/train_FS.yaml', 'r') as f:
 with open('../config/model.yaml', 'r') as f:
     model_config = yaml.safe_load(f)
 config['model'] = model_config['model']
-    
+
 print(f"Using data home: {data_home}")
 print(f"Using config file: config/train_FS.yaml")
-    
+
 # ----- Set Training Parameters -----
 
 PARAMS = {
@@ -59,7 +58,7 @@ PARAMS = {
     "KERNEL_SIZE": config['model']['kernel_size'],
     "DROPOUT": config['model']['dropout'],
     "N_DILATIONS": config['model']['n_dilations'],
-    
+
     # Training configuration
     "LEARNING_RATE": config['training']['learning_rate'],
     "N_EPOCHS": config['training']['n_epochs'],
@@ -72,7 +71,7 @@ PARAMS = {
     "SCHEDULER_FACTOR": config['training']['scheduler_factor'],
     "SCHEDULER_PATIENCE": config['training']['scheduler_patience'],
     "TEST_SIZE": config['training']['test_size'],
-    
+
     # Experiment tracking
     "PROJECT_NAME": config['experiment']['project_name'],
     "WANDB_API_KEY": config['experiment']['wandb_api_key'],
@@ -90,7 +89,7 @@ if mis != {'tracks': {}}:
     print("Please ensure the data is in the correct location and the dataset is complete.")
     print(f"Ensure the 'CMR_full_dataset_1.0' folder exists in {data_home}")
     sys.exit(1)
-    
+
 carn_tracks = carn.load_tracks()
 carn_keys = list(carn_tracks.keys())
 
@@ -100,171 +99,150 @@ if torch.cuda.is_available():
     accelerator = "gpu"
 else:
     device = torch.device("cpu")
-    accelerator = "cpu" 
+    accelerator = "cpu"
 
 num_workers = PARAMS['NUM_WORKERS']
 
-# ----- WandB Setup -----
 
-if args.disable_wandb:
-    os.environ["WANDB_MODE"] = "disabled"
-    print("WandB logging disabled")
-else:
-    print("WandB logging enabled")
-    
 # ----- Training Loop -----
-
-for train_fold in [1,2]:
-    test_fold = 3 - train_fold   # When train_fold is 1, test_fold is 2 and vice versa
-
     # ----- Set seeds -----
-    for run, seed in enumerate([42, 52, 62], start=1):
-        
-        print(f"Running train fold {train_fold}, run {run} with seed {seed}")
-        
-        # Set random seed for reproducibility
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        L.seed_everything(seed, workers=True)
+for run, seed in enumerate([42, 52, 62], start=1):
 
-        # ----- Load Splits -----
-        csv_path = os.path.join(ROOT, 'data', 'cmr_splits.csv')
+    print(f"Run {run} with seed {seed}")
 
-        carn_train_keys, carn_val_keys, carn_test_keys = carn_split_keys(
-                                                                csv_path=csv_path,
-                                                                train_fold=train_fold,
-                                                                test_fold=test_fold,
-                                                                split_col='Taala',
-                                                                test_size=PARAMS['TEST_SIZE'],
-                                                                seed=seed,
-                                                                reorder=True
-                                                            )
+    # Set random seed for reproducibility
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    L.seed_everything(seed, workers=True)
 
-        print(f"Train keys: {len(carn_train_keys)}, Val keys: {len(carn_val_keys)}, Test keys: {len(carn_test_keys)}")
-        
-        # Prepare datasets and loaders
-        train_data = BeatData(carn_tracks, carn_train_keys, widen=True)
-        val_data = BeatData(carn_tracks, carn_val_keys, widen=True)
-        test_data = BeatData(carn_tracks, carn_test_keys, widen=True)
+    # ----- Load Splits -----
+    csv_path = os.path.join(ROOT, 'data', 'cmr_splits.csv')
 
-        train_loader = DataLoader(train_data, batch_size=PARAMS['BATCH_SIZE'], num_workers=num_workers)
-        val_loader = DataLoader(val_data, batch_size=PARAMS['BATCH_SIZE'], num_workers=num_workers)
-        test_loader = DataLoader(test_data, batch_size=PARAMS['BATCH_SIZE'], num_workers=num_workers)
+    carn_train_keys, carn_val_keys, carn_test_keys = carn_split_keys(
+                                                            csv_path=csv_path,
+                                                            split_col='Taala',
+                                                            test_size=PARAMS['TEST_SIZE'],
+                                                            seed=seed,
+                                                            reorder=True
+                                                        )
 
-        # ----- Model and Lightning Module -----
-        tcn = MultiTracker(
-            n_filters=PARAMS["N_FILTERS"],
-            n_dilations=PARAMS["N_DILATIONS"],
-            kernel_size=PARAMS["KERNEL_SIZE"],
-            dropout_rate=PARAMS["DROPOUT"]
-        )
+    print(f"Train keys: {len(carn_train_keys)}, Val keys: {len(carn_val_keys)}, Test keys: {len(carn_test_keys)}")
 
-        model = PLTCN(model=tcn, params=PARAMS)
+    # Prepare datasets and loaders
+    train_data = BeatData(carn_tracks, carn_train_keys, widen=True)
+    val_data = BeatData(carn_tracks, carn_val_keys, widen=True)
+    test_data = BeatData(carn_tracks, carn_test_keys, widen=True)
 
-        # ----- Callbacks -----
-        timestamp = datetime.now().strftime("%Y%m%d%H%M")
-        ckpt_name = PARAMS["CKPT_NAME"]
+    train_loader = DataLoader(train_data, batch_size=PARAMS['BATCH_SIZE'], num_workers=num_workers)
+    val_loader = DataLoader(val_data, batch_size=PARAMS['BATCH_SIZE'], num_workers=num_workers)
+    test_loader = DataLoader(test_data, batch_size=PARAMS['BATCH_SIZE'], num_workers=num_workers)
 
-        CKPTS_DIR = os.path.join(ROOT, 'output', 'checkpoints', timestamp)
-        os.makedirs(CKPTS_DIR, exist_ok=True)
+    # ----- Model and Lightning Module -----
+    tcn = MultiTracker(
+        n_filters=PARAMS["N_FILTERS"],
+        n_dilations=PARAMS["N_DILATIONS"],
+        kernel_size=PARAMS["KERNEL_SIZE"],
+        dropout_rate=PARAMS["DROPOUT"]
+    )
 
-        checkpoint_callback = ModelCheckpoint(
-            dirpath=CKPTS_DIR,
-            filename=f"{ckpt_name}-trainfold{train_fold}-run{run}" + "-{epoch:02d} -{val_loss:.3f}",
-            monitor="val_loss",
-            save_top_k=1,
-            mode="min",
-            auto_insert_metric_name=False,
-            save_last=True
-        )
+    model = PLTCN(model=tcn, params=PARAMS)
 
-        early_stop_callback = EarlyStopping(
-            monitor="val_loss",
-            patience=PARAMS["EARLY_STOP_PATIENCE"],    # minimum number of epochs with no improvement
-            mode="min",
-            min_delta=PARAMS["EARLY_STOP_MIN_DELTA"],  # minimum change to qualify as an improvement
-            verbose=True
-        )
+    # ----- Callbacks -----
+    timestamp = datetime.now().strftime("%Y%m%d%H%M")
+    ckpt_name = PARAMS["CKPT_NAME"]
 
-        # ----- Loggers -----
+    CKPTS_DIR = os.path.join(ROOT, 'output', 'checkpoints', timestamp)
+    os.makedirs(CKPTS_DIR, exist_ok=True)
 
-        run_config = PARAMS.copy()
-        # Remove any existing wandb api key
-        if "WANDB_API_KEY" in run_config:
-            del run_config["WANDB_API_KEY"]
-        run_config.update({
-            "RUN_ID": run,
-            "SEED": seed,
-            "TRAIN_FOLD": train_fold,
-            "TEST_FOLD": test_fold
-        })
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=CKPTS_DIR,
+        filename=f"{ckpt_name}-run{run}" + "-{epoch:02d} -{val_loss:.3f}",
+        monitor="val_loss",
+        save_top_k=1,
+        mode="min",
+        auto_insert_metric_name=False,
+        save_last=True
+    )
 
-        wandb.login(key=PARAMS["WANDB_API_KEY"])
-        wandb_run = wandb.init(
-            project=PARAMS["PROJECT_NAME"],
-            name=f"{PARAMS['PROJECT_NAME']}_{timestamp}_trainfold{train_fold}_run{run}_seed{seed}",
-            config=run_config,
-            reinit='finish_previous',
-            mode="disabled" if args.disable_wandb else "online",
-            
-        )
+    early_stop_callback = EarlyStopping(
+        monitor="val_loss",
+        patience=PARAMS["EARLY_STOP_PATIENCE"],    # minimum number of epochs with no improvement
+        mode="min",
+        min_delta=PARAMS["EARLY_STOP_MIN_DELTA"],  # minimum change to qualify as an improvement
+        verbose=True
+    )
 
-        wandb_logger = WandbLogger(experiment=wandb_run)
-        csv_logger = CSVLogger("lightning_logs")  # this gives you metrics.csv
+    run_config = PARAMS.copy()
+    # Remove any existing wandb api key
+    if "WANDB_API_KEY" in run_config:
+        del run_config["WANDB_API_KEY"]
+    run_config.update({
+        "RUN_ID": run,
+        "SEED": seed,
+    })
+
+    wandb.login(key=PARAMS["WANDB_API_KEY"])
+    wandb_run = wandb.init(
+        project=PARAMS["PROJECT_NAME"],
+        name=f"{PARAMS['PROJECT_NAME']}_{timestamp}_run{run}_seed{seed}",
+        config=run_config,
+        reinit='finish_previous',
+        mode="disabled" if args.disable_wandb else "online",
+
+    )
+
+    wandb_logger = WandbLogger(experiment=wandb_run)
+    csv_logger = CSVLogger("lightning_logs")  # this gives you metrics.csv
 
 
-        # ----- Trainer -----
-        trainer = L.Trainer(
-            max_epochs=PARAMS["N_EPOCHS"],
-            accelerator=accelerator,
-            gradient_clip_val=0.5,
-            callbacks=[checkpoint_callback, early_stop_callback],
-            logger=[csv_logger, wandb_logger]  # explicitly include both
-        )
+    # ----- Trainer -----
+    trainer = L.Trainer(
+        max_epochs=PARAMS["N_EPOCHS"],
+        accelerator=accelerator,
+        gradient_clip_val=0.5,
+        callbacks=[checkpoint_callback, early_stop_callback]
+    )
 
-        # ----- Train -----
-        start_time = time.time()
-        trainer.fit(model, train_loader, val_loader)
-        end_time = time.time()
+    # ----- Train -----
+    start_time = time.time()
+    trainer.fit(model, train_loader, val_loader)
+    end_time = time.time()
 
 
-        train_duration = end_time - start_time
-        # Format as HH:MM:SS
-        hours, rem = divmod(train_duration, 3600)
-        minutes, seconds = divmod(rem, 60)
-        time_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
-        print(f"Total training time: {time_str} (hh:mm:ss)")
+    train_duration = end_time - start_time
+    # Format as HH:MM:SS
+    hours, rem = divmod(train_duration, 3600)
+    minutes, seconds = divmod(rem, 60)
+    time_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+    print(f"Total training time: {time_str} (hh:mm:ss)")
 
-        # Log training time to W&B
-        wandb.log({"train_time_sec": train_duration})
-                
-        # ----- Copy Train Logs -----
-        try:
-            metrics_src = os.path.join(csv_logger.log_dir, "metrics.csv")
+    # ----- Copy Train Logs -----
+    try:
+        metrics_src = os.path.join(csv_logger.log_dir, "metrics.csv")
 
-            # Target path: output/checkpoints/<timestamp>/metrics.csv
-            metrics_dest = os.path.join(CKPTS_DIR, "metrics.csv")
+        # Target path: output/checkpoints/<timestamp>/metrics.csv
+        metrics_dest = os.path.join(CKPTS_DIR, "metrics.csv")
 
-            # Copy it
-            shutil.copyfile(metrics_src, metrics_dest)
-            print(f"Copied Lightning metrics.csv to: {metrics_dest}")
-            
-            # Copy the generated checkpoint into the pretrained folder
-            latest_ckpt = checkpoint_callback.best_model_path
-            pretrained_dir = os.path.join(ROOT, 'pretrained', 'tcn_carnatic_fs')
-            os.makedirs(pretrained_dir, exist_ok=True)
-            shutil.copyfile(latest_ckpt, os.path.join(pretrained_dir, f"{ckpt_name}-trainfold{train_fold}-run{run}.ckpt"))
-            print(f"Copied checkpoint to: {os.path.join(pretrained_dir, f'{ckpt_name}-trainfold{train_fold}-run{run}.ckpt')}")
+        # Copy it
+        shutil.copyfile(metrics_src, metrics_dest)
+        print(f"Copied Lightning metrics.csv to: {metrics_dest}")
 
-        except Exception as e:
-            print(f"Warning: Failed to copy checkpoint to the 'pretrained' folder: {e}. You can still find it in the output/checkpoints/<timestamp> folder.")
-            print("Training will continue...")
-            
-        finally:
-            # Clean up the wandb run directory
-            wandb_run.finish()
-            print("Wandb run finished")
+        # Copy the generated checkpoint into the pretrained folder
+        latest_ckpt = checkpoint_callback.best_model_path
+        pretrained_dir = os.path.join(ROOT, 'pretrained', 'tcn_carnatic_fs')
+        os.makedirs(pretrained_dir, exist_ok=True)
+        shutil.copyfile(latest_ckpt, os.path.join(pretrained_dir, f"{ckpt_name}-trainfold{train_fold}-run{run}.ckpt"))
+        print(f"Copied checkpoint to: {os.path.join(pretrained_dir, f'{ckpt_name}-trainfold{train_fold}-run{run}.ckpt')}")
+
+    except Exception as e:
+        print(f"Warning: Failed to copy checkpoint to the 'pretrained' folder: {e}. You can still find it in the output/checkpoints/<timestamp> folder.")
+        print("Training will continue...")
+
+    finally:
+        # Clean up the wandb run directory
+        wandb_run.finish()
+        print("Wandb run finished")
 
 print(f"Training completed successfully!")

@@ -1,0 +1,23 @@
+{
+    "track_id": "12031",
+    "beat_F-measure": 0.7458305537024683,
+    "beat_Cemgil": 0.6626551084569449,
+    "beat_Cemgil Best Metric Level": 0.6626551084569449,
+    "beat_Goto": 0.0,
+    "beat_P-score": 0.614190687361419,
+    "beat_Correct Metric Level Continuous": 0.13082039911308205,
+    "beat_Correct Metric Level Total": 0.3004434589800443,
+    "beat_Any Metric Level Continuous": 0.1541038525963149,
+    "beat_Any Metric Level Total": 0.3601340033500838,
+    "beat_Information gain": 0.21206901820928384,
+    "downbeat_F-measure": 0.7289719626168223,
+    "downbeat_Cemgil": 0.6518429685624109,
+    "downbeat_Cemgil Best Metric Level": 0.6518429685624109,
+    "downbeat_Goto": 0.0,
+    "downbeat_P-score": 0.6511627906976745,
+    "downbeat_Correct Metric Level Continuous": 0.31007751937984496,
+    "downbeat_Correct Metric Level Total": 0.31007751937984496,
+    "downbeat_Any Metric Level Continuous": 0.3764705882352941,
+    "downbeat_Any Metric Level Total": 0.3764705882352941,
+    "downbeat_Information gain": 0.610752848635372
+}

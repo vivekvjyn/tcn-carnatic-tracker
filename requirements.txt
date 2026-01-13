@@ -3,7 +3,7 @@
 # platform: osx-arm64
 # python==3.10
 madmom
-torch==2.5.1
+torch
 lightning
 git+https://github.com/satyajeetprabhu/mirdata-indexed.git
 mir_eval

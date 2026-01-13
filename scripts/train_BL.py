@@ -33,8 +33,8 @@ import random
 parser = argparse.ArgumentParser(description='Train TCN model on multiple datasets')
 parser.add_argument('--data_home', type=str, default='../data',
                     help='Path to the mounted datasets directory')
-parser.add_argument('--datasets', nargs='+', 
-                    default=['gtzan_genre', 'beatles', 'ballroom', 
+parser.add_argument('--datasets', nargs='+',
+                    default=['gtzan_genre', 'beatles', 'ballroom',
                             'rwc_popular', 'rwc_jazz', 'rwc_classical'],
                     help='Datasets to include in training')
 parser.add_argument('--disable-wandb', action='store_true',
@@ -53,7 +53,7 @@ with open('../config/train_BL.yaml', 'r') as f:
 with open('../config/model.yaml', 'r') as f:
     model_config = yaml.safe_load(f)
 config['model'] = model_config['model']
-    
+
 print(f"Using data home: {data_home}")
 print(f"Using config file: config/train_BL.yaml")
 
@@ -72,7 +72,7 @@ PARAMS = {
     "KERNEL_SIZE": config['model']['kernel_size'],
     "DROPOUT": config['model']['dropout'],
     "N_DILATIONS": config['model']['n_dilations'],
-    
+
     # Training configuration
     "LEARNING_RATE": config['training']['learning_rate'],
     "N_EPOCHS": config['training']['n_epochs'],
@@ -85,7 +85,7 @@ PARAMS = {
     "SCHEDULER_FACTOR": config['training']['scheduler_factor'],
     "SCHEDULER_PATIENCE": config['training']['scheduler_patience'],
     "TEST_SIZE": config['training']['test_size'],
-    
+
     # Experiment tracking
     "PROJECT_NAME": config['experiment']['project_name'],
     "WANDB_API_KEY": config['experiment']['wandb_api_key'],
@@ -122,13 +122,19 @@ if torch.cuda.is_available():
     accelerator = "gpu"
 else:
     device = torch.device("cpu")
-    accelerator = "cpu" 
+    accelerator = "cpu"
 
 num_workers = PARAMS['NUM_WORKERS']
 
+if args.disable_wandb:
+    os.environ["WANDB_MODE"] = "disabled"
+    print("WandB logging disabled")
+else:
+    print("WandB logging enabled")
+
 # ----- Set seeds -----
 for run, seed in enumerate([42, 52, 62], start=1):
-    
+
     print(f"Running run {run} with seed {seed}")
 
     # Set random seed for reproducibility
@@ -143,16 +149,16 @@ for run, seed in enumerate([42, 52, 62], start=1):
 
     # Use the custom split function to stratify the split based on dataset names
     train_keys, val_keys, test_keys = get_split_keys(
-        keys=keys, 
-        labels=all_labels, 
-        test_size=PARAMS['TEST_SIZE'], 
-        seed=seed, 
+        keys=keys,
+        labels=all_labels,
+        test_size=PARAMS['TEST_SIZE'],
+        seed=seed,
         shuffle=True
     )
 
     # Print dataset distribution in splits
     dataset_manager.print_split_distribution(train_keys, "Training")
-    dataset_manager.print_split_distribution(val_keys, "Validation") 
+    dataset_manager.print_split_distribution(val_keys, "Validation")
     dataset_manager.print_split_distribution(test_keys, "Test")
 
 
@@ -218,7 +224,7 @@ for run, seed in enumerate([42, 52, 62], start=1):
         config=run_config,
         reinit='finish_previous',
         mode="disabled" if args.disable_wandb else "online",
-        
+
     )
 
     wandb_logger = WandbLogger(experiment=wandb_run)
@@ -260,7 +266,7 @@ for run, seed in enumerate([42, 52, 62], start=1):
         # Copy it
         shutil.copyfile(metrics_src, metrics_dest)
         print(f"Copied Lightning metrics.csv to: {metrics_dest}")
-        
+
         # Copy the generated checkpoint into the pretrained folder
         latest_ckpt = checkpoint_callback.best_model_path
         pretrained_dir = os.path.join(ROOT, 'pretrained', 'tcn_bl')
@@ -271,10 +277,10 @@ for run, seed in enumerate([42, 52, 62], start=1):
     except Exception as e:
         print(f"Warning: Failed to copy checkpoint to the 'pretrained' folder: {e}. You can still find it in the output/checkpoints/<timestamp> folder.")
         print("Training will continue...")
-        
+
     finally:
         # Clean up the wandb run directory
         wandb_run.finish()
         print("Wandb run finished")
-        
+
 print(f"Training completed successfully!")

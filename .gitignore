@@ -3,3 +3,4 @@
 **/lightning_logs/
 **/wandb/
 **/.ipynb_checkpoints/
+data/CMR_full_dataset_1.0
